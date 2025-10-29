@@ -43,7 +43,7 @@ pip install nibabel numpy scikit-image matplotlib torchio
 * num_classes=5
 
 ## code:
-`dataset.py`
+### `dataset.py`
 Find the correct file, match the image with the label, normalize the ID, split the data, read the NIfTI, perform normalization, and return the standard tensor.
 return  {"id", "image", "label", "affine"}
 * import
@@ -58,3 +58,20 @@ return  {"id", "image", "label", "affine"}
     * `self.img_index = {canonical_id: Path}`
     * `self.lab_index = {canonical_id: Path}`
   * `splits.json`: With a fixed random seed of 42, common_ids 80/10/10 are divided into train/val/test to ensure experimental reproducibility.
+### `modules.py`
+A minimal runnable 3D U-Net（encoder*3 –bottleneck–decoder *4 + skip connections. Use InstanceNorm3d + LeakyReLU
+* **Output** the logits for num_classes channels.
+* The parameter `base` can be adjusted to adapt to the video memory.
+### `train.py`
+training+validation
+* Construct a DataLoader using Prostate3DDataset(split=train/val)
+* use
+  * CrossEntropyLoss baseline; 
+  * AdamW optimization; 
+  * can enable --amp mixed precision.
+* Calculate per-class Dice for each epoch, print the table, and save best.ckpt - mean Dice(val) at `runs/best.ckpt`
+### `predict.py`
+Inference/Derived Prediction
+* load weight
+* Use `split=test` to perform forward processing on each sample; `argmax` to obtain the semantic labels.
+* Save the original image as an NIfTI (space-aligned) file using affine at `runs/preds/`.
