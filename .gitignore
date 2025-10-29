@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Large data / outputs
+data/
+runs/
+*.nii
+*.nii.gz
+
+# （macOS）/（Windows）
+.DS_Store
+Thumbs.db
