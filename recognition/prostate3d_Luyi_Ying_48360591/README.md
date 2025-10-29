@@ -70,8 +70,20 @@ training+validation
   * AdamW optimization; 
   * can enable --amp mixed precision.
 * Calculate per-class Dice for each epoch, print the table, and save best.ckpt - mean Dice(val) at `runs/best.ckpt`
+**imporved**:
+
+    In each epoch, only one random patch is taken from each sample. In the next epoch, another patch is taken from a different location within the same volume (randomness + data augmentation).
+* Do light weight training
+* Replace the loss with CE + Dice (weight 0.5 is relatively stable).
+
+
 ### `predict.py`
 Inference/Derived Prediction
 * load weight
 * Use `split=test` to perform forward processing on each sample; `argmax` to obtain the semantic labels.
 * Save the original image as an NIfTI (space-aligned) file using affine at `runs/preds/`.
+
+### process
+1. Data reading & ID matching
+2. Training pipeline (patch-based)
+3. Sliding window inference (GPU friendly) and successful NIfTI export.

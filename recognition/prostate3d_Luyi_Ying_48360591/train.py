@@ -13,6 +13,16 @@ python recognition\prostate3d_Luyi_Ying_48360591\train.py `
 
 base:Smaller model, saves video memory; patch:64³ patch; amp: mixed precision
 Seeing the class-specific Dice for each epoch and generating runs\best.ckpt indicates that the training pipeline is OK.
+
+# 正式跑 30 个 epoch（patch 训练 + AMP）
+$env:PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+python recognition\prostate3d_Luyi_Ying_48360591\train.py `
+  --data_root "D:\document\UQ\4COMP3710\A3\data" `
+  --epochs 30 --batch_size 1 `
+  --base 8 `
+  --patch 64 64 64 `
+  --accum 1 `
+  --amp
 """
 import argparse
 from pathlib import Path
@@ -24,6 +34,19 @@ from torch.utils.data import DataLoader
 from modules import UNet3D
 from dataset import Prostate3DDataset
 import math
+import torch.nn.functional as F
+def dice_loss_multiclass(logits, target, eps=1e-5):
+    """
+    logits: (B,C,Z,Y,X), target: (B,Z,Y,X) in [0..C-1]
+    """
+    C = logits.shape[1]
+    probs = F.softmax(logits, dim=1)
+    onehot = F.one_hot(target, num_classes=C).permute(0,4,1,2,3).float()
+    dims = (0,2,3,4)
+    inter = (probs * onehot).sum(dims)
+    denom = (probs*probs).sum(dims) + (onehot*onehot).sum(dims)
+    dice = (2*inter + eps) / (denom + eps)
+    return 1.0 - dice.mean()
 
 def random_crop_3d(img, lab, size):
     """
@@ -121,9 +144,29 @@ def main(args):
             # 从整幅里裁一个 patch
             img_c, lab_c = random_crop_3d(img, lab, patch)
 
+            # ----- 轻量增强light aug -----
+            if torch.rand(1).item() < 0.5:  # 随机翻转三个轴
+                if torch.rand(1).item() < 0.5:
+                    img_c = img_c.flip(-1); lab_c = lab_c.flip(-1)  # X
+                if torch.rand(1).item() < 0.5:
+                    img_c = img_c.flip(-2); lab_c = lab_c.flip(-2)  # Y
+                if torch.rand(1).item() < 0.5:
+                    img_c = img_c.flip(-3); lab_c = lab_c.flip(-3)  # Z
+            # 轻度强度扰动（亮度/对比度 + 微噪声）
+            if torch.rand(1).item() < 0.5:
+                scale = 1.0 + 0.10*torch.randn((), device=img_c.device)   # ±10%
+                shift = 0.05*torch.randn((), device=img_c.device)          # ±0.05
+                img_c = img_c*scale + shift
+                img_c = img_c.clamp(-5, 5)
+            # ----------------------
+
             with torch.cuda.amp.autocast(enabled=args.amp):
                 logits = model(img_c)
-                loss = criterion(logits, lab_c) / accum
+                ce = F.cross_entropy(logits, lab_c)
+                dl = dice_loss_multiclass(logits, lab_c)
+                loss = ce + 0.5*dl
+            loss = loss / accum
+
 
             scaler.scale(loss).backward()
             step_in_accum += 1
