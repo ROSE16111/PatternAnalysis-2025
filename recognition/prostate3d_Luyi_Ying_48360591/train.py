@@ -273,17 +273,23 @@ def main(args):
 
                 # 权重的顺序必须与类别索引一致：0=background,1=body,2=bone,3=bladder,4=rectum,5=prostate
                 # 先用一个“安全”方案：大幅降低背景权重，适度提高小器官权重
-                weights = torch.tensor([0.05, 1.0, 1.2, 2.0, 2.0, 3.0], dtype=torch.float32, device=device)
-                criterion = torch.nn.CrossEntropyLoss(weight=weights)
+                #weights = torch.tensor([0.05, 1.0, 1.2, 2.0, 2.0, 3.0], dtype=torch.float32, device=device)
+                #criterion = torch.nn.CrossEntropyLoss(weight=weights)
 
         if len(dices_all):
-            dices_all = np.stack(dices_all); per_class = dices_all.mean(0); mdice = float(per_class.mean())
+            dices_all = np.stack(dices_all)      # (Nval, 6)
+            per_class = dices_all.mean(0)        # (6,)
+            mdice_all = float(per_class.mean())      # 含背景
+            mdice_org = float(per_class[1:].mean())  # 去背景（推荐用于选 best）
         else:
-            per_class = np.zeros(6, dtype=np.float32); mdice = 0.0
+            per_class = np.zeros(6, dtype=np.float32)
+            mdice_all = 0.0
+            mdice_org = 0.0
 
-        print(f"\nEpoch {epoch:03d} | mean Dice (val, center-patch): {mdice:.4f}")
-        for name, v in zip(CLASS_NAMES[0:], per_class[0:]):
-            print(f"  - {name:<8s}: {v:.4f}  [{'OK' if v>=0.70 else 'LOW'}]")
+        print(f"\nEpoch {epoch:03d} | mean Dice (val, center-patch): "
+            f"all={mdice_all:.4f} | organs={mdice_org:.4f}")
+        for name, v in zip(CLASS_NAMES, per_class):
+            print(f"  - {name:<8s}: {v:.4f}  [{'OK' if (name!='background' and v>=0.70) else 'LOW'}]")
         print("")
 
         # ---- 周期性全幅滑窗验证（更客观，用它来挑 best）----
@@ -293,22 +299,17 @@ def main(args):
                 model, dl_val, device, num_classes=6,
                 patch=tuple(args.val_patch), overlap=args.val_overlap, amp=args.amp
             )
-            mdice_full = float(per_class_full.mean())
-            print(f"[FULLVAL] mean Dice: {mdice_full:.4f}")
-            for name, v in zip(CLASS_NAMES[0:], per_class_full[0:]):
-                print(f"  - {name:<8s}: {v:.4f}  [{'OK' if v>=0.70 else 'LOW'}]")
+            mdice_full_all = float(per_class_full.mean())
+            mdice_full_org = float(per_class_full[1:].mean())
+            print(f"[FULLVAL] mean Dice: all={mdice_full_all:.4f} | organs={mdice_full_org:.4f}")
+            for name, v in zip(CLASS_NAMES, per_class_full):
+                print(f"  - {name:<8s}: {v:.4f}  [{'OK' if (name!='background' and v>=0.70) else 'LOW'}]")
 
-            # 用“全幅指标”决定是否保存 best
-            if mdice_full > best_mdice:
-                best_mdice = mdice_full
+            # 用“去背景”的均值来挑 best（推荐）
+            if mdice_full_org > best_mdice:
+                best_mdice = mdice_full_org
                 torch.save({"model": model.state_dict(), "args": vars(args)}, ckpt_path)
-                print(f"[SAVE] best(full) -> {ckpt_path} (mean Dice={best_mdice:.4f})")
-        else:
-            # 如果本 epoch 不做全幅，用中心-patch 指标兜底挑 best（可选）
-            if mdice > best_mdice:
-                best_mdice = mdice
-                torch.save({"model": model.state_dict(), "args": vars(args)}, ckpt_path)
-                print(f"[SAVE] best(center) -> {ckpt_path} (mean Dice={best_mdice:.4f})")
+                print(f"[SAVE] best(full) -> {ckpt_path} (organ-mean={best_mdice:.4f})")
 
 
     print("[INFO] Training finished.")

@@ -12,6 +12,8 @@ Measuring the degree of overlap between predictions and true values;The closer t
 - `dataset.py`  – NIfTI I/O, read and preprocessing data
 - `train.py`    – training/validation loop; logs loss & per-class Dice; saves curves
 - `predict.py`  – sliding-window inference; saves NIfTI + slice PNGs
+- `tools_count_labels.py` – count the number of each class
+- `quick_check.py` – read a NIfTI，check data and lables
 - `README.md`   – this document
 - `pics` picture resources for readme file
 
@@ -81,7 +83,7 @@ In each epoch, only one random patch is taken from each sample. In the next epoc
 
 **imporved 2**:
   * change random sampling to balanced sampling to avoid sampling bias
-  * lose functoin: class-weighted CE
+  * set mdice_full_org(get rid of background) as the best indicator
 
 ### `predict.py`
 Inference/Derived Prediction
