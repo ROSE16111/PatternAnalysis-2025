@@ -96,6 +96,9 @@ In each epoch, only one random patch is taken from each sample. In the next epoc
   * Add category weights to CE
   * Dice is excluded from the background, and small organs are given greater weight.
   * Corrected "Union sampling" → "Class-based equalization sampling"
+**improved 4**
+* Sliding window inference weighted fusion (resolving gaps/joining false negatives)
+* Automatically calculate category weights
 
 **visualize**:
 * training_losses.png

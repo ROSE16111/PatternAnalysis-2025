@@ -24,6 +24,7 @@ python recognition\prostate3d_Luyi_Ying_48360591\train.py `
   --accum 1 `
   --amp
 
+  base: 8/16
   
 python recognition\prostate3d_Luyi_Ying_48360591\train.py `
   --data_root "D:\document\UQ\4COMP3710\A3\data" `
@@ -37,8 +38,11 @@ python recognition\prostate3d_Luyi_Ying_48360591\train.py `
   --base 16 `
   --patch 64 64 64 `
   --accum 1 `
-  --val_overlap 32 `
+  --lr 1e-3 `
+  --fullval_every 1 `
+  --val_patch 64 64 64 --val_overlap 32 `
   --amp
+
 """
 import argparse
 from pathlib import Path
@@ -63,14 +67,23 @@ def _starts(L, P, O):
     if s[-1] != L - P: s.append(L - P)
     return s
 
+def _blend_weight(pz, py, px):
+    # 3D Hanning 窗，中心权重大、边缘小，减少拼接缝
+    wz = np.hanning(pz)[:, None, None]
+    wy = np.hanning(py)[None, :, None]
+    wx = np.hanning(px)[None, None, :]
+    w = (wz * wy * wx).astype(np.float32)
+    w /= (w.max() + 1e-8)
+    return w  # (pz,py,px)
+
 @torch.no_grad()
 def sliding_window_predict_logits(model, img, num_classes, patch, overlap, device, amp=True):
-    # img: (B=1, C=1, Z,Y,X) on device
     _, _, Z, Y, X = img.shape
     pz, py, px = patch
     sz, sy, sx = _starts(Z,pz,overlap), _starts(Y,py,overlap), _starts(X,px,overlap)
     probs_sum = np.zeros((num_classes, Z, Y, X), dtype=np.float32)
     count_map = np.zeros((Z, Y, X), dtype=np.float32)
+    w_patch = _blend_weight(pz, py, px)
 
     autocast = torch.cuda.amp.autocast if device.type=="cuda" else torch.cpu.amp.autocast
     model.eval()
@@ -79,13 +92,32 @@ def sliding_window_predict_logits(model, img, num_classes, patch, overlap, devic
             for x0 in sx:
                 tile = img[:, :, z0:z0+pz, y0:y0+py, x0:x0+px]
                 with autocast(enabled=amp):
-                    logits = model(tile)                  # (1,C,*,*,*)
-                    probs  = F.softmax(logits, dim=1)[0].float().cpu().numpy()
+                    logits = model(tile)
+                    probs  = F.softmax(logits, dim=1)[0].float().cpu().numpy()  # (C,pz,py,px)
                 cz, cy, cx = probs.shape[1:]
-                probs_sum[:, z0:z0+cz, y0:y0+cy, x0:x0+cx] += probs
-                count_map[z0:z0+cz, y0:y0+cy, x0:x0+cx] += 1
+                w = w_patch[:cz, :cy, :cx]
+                probs_sum[:, z0:z0+cz, y0:y0+cy, x0:x0+cx] += probs[:, :cz, :cy, :cx] * w[None]
+                count_map[z0:z0+cz, y0:y0+cy, x0:x0+cx] += w
     probs = probs_sum / np.maximum(count_map[None,...], 1e-6)
-    return probs  # (C,Z,Y,X)
+    return probs
+
+def compute_ce_weights(ds, num_classes):
+    counts = np.zeros(num_classes, dtype=np.float64)
+    for i in range(len(ds)):
+        lab = ds[i]["label"].numpy().ravel()
+        u, c = np.unique(lab, return_counts=True)
+        for ui, ci in zip(u, c):
+            if 0 <= ui < num_classes: counts[ui] += ci
+    freq = counts / counts.sum()
+    w = 1.0 / np.log(1.1 + freq)         # “有效样本”式权重，稳定
+    w[2] *= 1.5 
+    w[3] *= 1.5                         # bladder 适度上调
+    w[4] *= 4.0                          # rectum 强上调
+    w[5] *= 4.0                         # prostate 强上调
+    w[0] *= 0.5                          # 强烈下调背景
+    # 归一到均值=1，避免极端权重数值不稳
+    w = w / (w.mean() + 1e-8)
+    return torch.tensor(w, dtype=torch.float32)
 
 # (For val dataloader, calculate per-class Dice)
 def full_volume_validation(model, dl_val, device, num_classes=6, patch=(64,64,64), overlap=16, amp=True):
@@ -98,6 +130,8 @@ def full_volume_validation(model, dl_val, device, num_classes=6, patch=(64,64,64
             probs = sliding_window_predict_logits(model, img, num_classes, patch, overlap, device, amp)
             pred  = probs.argmax(0)              # numpy (Z,Y,X)
             lab_np = lab[0].cpu().numpy()        # numpy (Z,Y,X)
+            hist = np.bincount(pred.ravel(), minlength=num_classes) / pred.size
+            print(" [FULLVAL] pred dist:", dict((CLASS_NAMES[i], float(hist[i])) for i in range(num_classes)))
 
             per_c = []
             for c in range(num_classes):
@@ -215,7 +249,7 @@ def main(args):
     # 损失 + 优化器（baseline：CE，可日后换 DiceLoss/组合以提升）
     #criterion = nn.CrossEntropyLoss()
     # class weights (0=bg, 1=body, 2=bone, 3=bladder, 4=rectum, 5=prostate)
-    ce_weights = torch.tensor([0.05, 1.0, 1.2, 2.5, 3.0, 4.0], dtype=torch.float32, device=device)
+    ce_weights = compute_ce_weights(ds_train, NUM_CLASSES).to(device)
     criterion = nn.CrossEntropyLoss(weight=ce_weights)
 
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
@@ -262,8 +296,18 @@ def main(args):
             img = batch["image"].to(device)   # (B,1,Z,Y,X) 这里 B=1
             lab = batch["label"].to(device)   # (B,Z,Y,X)
 
-            # 从整幅里裁一个 patch
-            img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(2,3,4,5), pos_rate=0.8)
+            # 从整幅里裁一个 patch, pos_rate:命中比例
+            r = torch.rand(()).item()
+            if r < 0.80:
+                # 80%：器官中心
+                img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(2,3,4,5), pos_rate=1.0)
+            elif r < 0.85:
+                # 15%：身体中心
+                img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(1,), pos_rate=1.0)
+            else:
+                # 5%：背景中心（纯负样本），强迫模型学“不是器官”的外观
+                img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(0,), pos_rate=1.0)
+
 
 
             # ----- 轻量增强light aug -----
@@ -285,10 +329,19 @@ def main(args):
             with torch.cuda.amp.autocast(enabled=args.amp):
                 logits = model(img_c)
                 #ce = F.cross_entropy(logits, lab_c)
-                ce = criterion(logits, lab_c)  # 用上面的加权 CE
-                dice_w = torch.tensor([0.0, 1.0, 1.2, 2.0, 2.5, 3.5], dtype=torch.float32, device=device)  # 背景权重0
-                dl = dice_loss_multiclass(logits, lab_c, class_weights=dice_w, drop_bg=True)
-                loss = ce + 1.0*dl
+                ce = criterion(logits, lab_c)
+
+                # Dice 也纳入背景，但给个较小权重，避免全涂背景
+                dice_w = ce_weights.clone()
+                dice_w[0] = 0.2                          # 背景也参与 Dice，但权重很小
+                dl = dice_loss_multiclass(
+                    logits, lab_c,
+                    class_weights=dice_w,
+                    drop_bg=False                         # 关键：不要丢弃背景
+                )
+
+                # 让 CE 更主导，Dice 辅助对齐小器官
+                loss = 0.7*ce + 0.3*dl
             loss = loss / accum
             # 记录原始 ce/dice/total（注意：这里记录的是未除以accum前的数）
             sum_ce  += ce.item()
