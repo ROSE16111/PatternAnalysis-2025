@@ -35,12 +35,13 @@ pip install nibabel numpy scikit-image matplotlib torchio
   * C=1（Single-channel）, channel-first 
   * voxel dimension(Z=256, Y=256, X=128)
 * **Label uniques**: 
-  * 0: body
-  * 1: bone
-  * 2: bladder
-  * 3: rectum
-  * 4: prostate
-* num_classes=5
+  * 0：background (60.35%)
+  * 1: body （35.47%）
+  * 2: bone（3.37%）
+  * 3: bladder（0.57%）
+  * 4: rectum （0.14%）
+  * 5: prostate（0.10%）
+* num_classes=6
 
 ## code:
 ### `dataset.py`

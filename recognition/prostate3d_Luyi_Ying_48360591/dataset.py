@@ -110,13 +110,13 @@ class Prostate3DDataset(Dataset):
         img = (img - m) / s
         img_t = torch.from_numpy(img[None, ...])  # (1,Z,Y,X)
 
-        # read lable and maps as 0..4
+        # read lable and maps as 0..5
         if lab_path is not None:
             lab, _ = load_nii(lab_path)
             lab = lab.astype(np.int64)
             if lab.min() >= 1:
                 lab = lab - 1
-            lab = np.clip(lab, 0, 4)
+            lab = np.clip(lab, 0, 5)
             lab_t = torch.from_numpy(lab)  # (Z,Y,X)
         else:
             lab_t = torch.tensor([])

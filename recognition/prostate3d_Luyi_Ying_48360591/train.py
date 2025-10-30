@@ -76,7 +76,7 @@ def sliding_window_predict_logits(model, img, num_classes, patch, overlap, devic
     return probs  # (C,Z,Y,X)
 
 # (For val dataloader, calculate per-class Dice)
-def full_volume_validation(model, dl_val, device, num_classes=5, patch=(64,64,64), overlap=16, amp=True):
+def full_volume_validation(model, dl_val, device, num_classes=6, patch=(64,64,64), overlap=16, amp=True):
     model.eval()
     dices_all = []
     with torch.no_grad():
@@ -146,7 +146,7 @@ def random_crop_3d_balanced(img, lab, size, focus=(2,3,4), pos_rate=0.8):
             lab[:,  z0:z0+pz, y0:y0+py, x0:x0+px])
 
 
-def dice_per_class_from_logits(logits, target, num_classes=5):
+def dice_per_class_from_logits(logits, target, num_classes=6):
     with torch.no_grad():
         pred = logits.argmax(1)  # (B,Z,Y,X)
         dices = []
@@ -158,8 +158,8 @@ def dice_per_class_from_logits(logits, target, num_classes=5):
             dices.append(2.0 * inter / denom)
         return np.array(dices, dtype=np.float32)
 
-NUM_CLASSES = 5
-CLASS_NAMES = ["body", "bone", "bladder", "rectum", "prostate"]
+NUM_CLASSES = 6
+CLASS_NAMES = ["background", "body", "bone", "bladder", "rectum", "prostate"]
 
 def dice_per_class(logits, target, num_classes=NUM_CLASSES):
     """计算逐类 Dice（per-class Dice）"""
@@ -211,7 +211,7 @@ def main(args):
             lab = batch["label"].to(device)   # (B,Z,Y,X)
 
             # 从整幅里裁一个 patch
-            img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(2,3,4), pos_rate=0.8)
+            img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(2,3,4,5), pos_rate=0.8)
 
 
             # ----- 轻量增强light aug -----
@@ -266,15 +266,23 @@ def main(args):
                 lab_c = lab[:,    z0:z1, y0:y1, x0:x1]
 
                 logits = model(img_c)
-                dices_all.append(dice_per_class_from_logits(logits, lab_c, num_classes=5))
+
+                # 计算逐类 Dice（6 类，含背景）
+                per_c = dice_per_class_from_logits(logits, lab_c, num_classes=NUM_CLASSES)
+                dices_all.append(per_c)
+
+                # 权重的顺序必须与类别索引一致：0=background,1=body,2=bone,3=bladder,4=rectum,5=prostate
+                # 先用一个“安全”方案：大幅降低背景权重，适度提高小器官权重
+                weights = torch.tensor([0.05, 1.0, 1.2, 2.0, 2.0, 3.0], dtype=torch.float32, device=device)
+                criterion = torch.nn.CrossEntropyLoss(weight=weights)
 
         if len(dices_all):
             dices_all = np.stack(dices_all); per_class = dices_all.mean(0); mdice = float(per_class.mean())
         else:
-            per_class = np.zeros(5, dtype=np.float32); mdice = 0.0
+            per_class = np.zeros(6, dtype=np.float32); mdice = 0.0
 
         print(f"\nEpoch {epoch:03d} | mean Dice (val, center-patch): {mdice:.4f}")
-        for name, v in zip(["body","bone","bladder","rectum","prostate"], per_class):
+        for name, v in zip(CLASS_NAMES[0:], per_class[0:]):
             print(f"  - {name:<8s}: {v:.4f}  [{'OK' if v>=0.70 else 'LOW'}]")
         print("")
 
@@ -282,12 +290,12 @@ def main(args):
         do_full = (epoch % args.fullval_every == 0) or (epoch == args.epochs)
         if do_full:
             per_class_full = full_volume_validation(
-                model, dl_val, device, num_classes=5,
+                model, dl_val, device, num_classes=6,
                 patch=tuple(args.val_patch), overlap=args.val_overlap, amp=args.amp
             )
             mdice_full = float(per_class_full.mean())
             print(f"[FULLVAL] mean Dice: {mdice_full:.4f}")
-            for name, v in zip(["body","bone","bladder","rectum","prostate"], per_class_full):
+            for name, v in zip(CLASS_NAMES[0:], per_class_full[0:]):
                 print(f"  - {name:<8s}: {v:.4f}  [{'OK' if v>=0.70 else 'LOW'}]")
 
             # 用“全幅指标”决定是否保存 best

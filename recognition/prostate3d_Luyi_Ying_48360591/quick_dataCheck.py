@@ -4,7 +4,7 @@
 # [INFO] Saved split file to D:\document\UQ\4COMP3710\A3\data\splits.json
 #ID: Case_013_Week3_LFOV
 #Image shape (C,Z,Y,X): (1, 256, 256, 128)
-#Label uniques: [0, 1, 2, 3, 4]
+#Label uniques: [0, 1, 2, 3, 4, 5]
 import argparse, torch
 from dataset import Prostate3DDataset
 
@@ -19,6 +19,6 @@ if __name__ == "__main__":
     print("ID:", s["id"])
     print("Image shape (C,Z,Y,X):", tuple(img.shape))
     if lab.numel() > 0:
-        print("Label uniques:", torch.unique(lab).tolist())  # expect [0,1,2,3,4]
+        print("Label uniques:", torch.unique(lab).tolist())  # expect [0,1,2,3,4,5]
     else:
         print("No label (test split)")
