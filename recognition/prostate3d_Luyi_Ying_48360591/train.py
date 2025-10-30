@@ -31,6 +31,14 @@ python recognition\prostate3d_Luyi_Ying_48360591\train.py `
   --base 8 --patch 64 64 64 --accum 1 --amp `
   --fullval_every 5 --val_patch 64 64 64 --val_overlap 16
 
+python recognition\prostate3d_Luyi_Ying_48360591\train.py `
+  --data_root "D:\document\UQ\4COMP3710\A3\data" `
+  --epochs 3 --batch_size 1 `
+  --base 16 `
+  --patch 64 64 64 `
+  --accum 1 `
+  --val_overlap 32 `
+  --amp
 """
 import argparse
 from pathlib import Path
@@ -104,9 +112,11 @@ def full_volume_validation(model, dl_val, device, num_classes=6, patch=(64,64,64
     return dices_all.mean(0)
 
 
-def dice_loss_multiclass(logits, target, eps=1e-5):
+def dice_loss_multiclass(logits, target, eps=1e-5, class_weights=None, drop_bg=True):
     """
-    logits: (B,C,Z,Y,X), target: (B,Z,Y,X) in [0..C-1]
+    logits: (B,C,Z,Y,X), target: (B,Z,Y,X)
+    class_weights: 长度=C 的权重张量（放在 device 上），用于各类 Dice 加权
+    drop_bg: True 时丢弃背景类的 Dice
     """
     C = logits.shape[1]
     probs = F.softmax(logits, dim=1)
@@ -114,16 +124,28 @@ def dice_loss_multiclass(logits, target, eps=1e-5):
     dims = (0,2,3,4)
     inter = (probs * onehot).sum(dims)
     denom = (probs*probs).sum(dims) + (onehot*onehot).sum(dims)
-    dice = (2*inter + eps) / (denom + eps)
-    return 1.0 - dice.mean()
+    dice_c = (2*inter + eps) / (denom + eps)  # (C,)
 
-def random_crop_3d_balanced(img, lab, size, focus=(2,3,4), pos_rate=0.8):
+    if drop_bg and C > 1:
+        dice_c = dice_c[1:]
+        if class_weights is not None:
+            class_weights = class_weights[1:]
+
+    if class_weights is not None:
+        loss = 1.0 - (dice_c * class_weights / (class_weights.sum() + 1e-8)).sum()
+    else:
+        loss = 1.0 - dice_c.mean()
+    return loss
+
+
+def random_crop_3d_balanced(img, lab, size, focus=(2,3,4,5), pos_rate=0.9):
     """
-    以 pos_rate 抽取“包含 focus 类之一”的正样本 patch；否则随机 patch
-    img: (B,1,Z,Y,X)  lab: (B,Z,Y,X)
+    正样本：先在 focus 里随机选一个类，再在该类的体素中随机取一个中心点裁剪；
+    否则随机裁剪。这样每个小器官被看到的机会是均等的。
     """
     B,C,Z,Y,X = img.shape
     pz,py,px = size
+
     def _crop_at(zc,yc,xc):
         z0 = max(0, min(zc - pz//2, Z - pz))
         y0 = max(0, min(yc - py//2, Y - py))
@@ -133,15 +155,14 @@ def random_crop_3d_balanced(img, lab, size, focus=(2,3,4), pos_rate=0.8):
 
     use_pos = (torch.rand(()) < pos_rate)
     if use_pos:
-        mask = torch.zeros_like(lab, dtype=torch.bool)
-        for c in focus:
-            mask |= (lab == c)
+        c_sel = int(focus[torch.randint(len(focus), (1,)).item()])
+        mask = (lab == c_sel)
         if mask.any():
             idx = mask.nonzero(as_tuple=False)
             k = torch.randint(0, idx.shape[0], (1,)).item()
             zc, yc, xc = idx[k, -3:].tolist()
-            img_c, lab_c = _crop_at(zc,yc,xc)
-            return img_c, lab_c
+            return _crop_at(zc,yc,xc)
+
     # fallback: 随机裁剪
     z0 = 0 if Z<=pz else torch.randint(0, Z-pz+1, (1,), device=img.device).item()
     y0 = 0 if Y<=py else torch.randint(0, Y-py+1, (1,), device=img.device).item()
@@ -192,7 +213,11 @@ def main(args):
     model = UNet3D(in_ch=1, num_classes=NUM_CLASSES, base=args.base).to(device)
 
     # 损失 + 优化器（baseline：CE，可日后换 DiceLoss/组合以提升）
-    criterion = nn.CrossEntropyLoss()
+    #criterion = nn.CrossEntropyLoss()
+    # class weights (0=bg, 1=body, 2=bone, 3=bladder, 4=rectum, 5=prostate)
+    ce_weights = torch.tensor([0.05, 1.0, 1.2, 2.5, 3.0, 4.0], dtype=torch.float32, device=device)
+    criterion = nn.CrossEntropyLoss(weight=ce_weights)
+
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
 
     scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
@@ -216,6 +241,15 @@ def main(args):
 
     patch = tuple(args.patch)
     accum = max(1, args.accum)
+    # ---- DEBUG: 看看标签里到底有哪些类 ----
+    for name, ds in [("TRAIN", ds_train), ("VAL", ds_val)]:
+        cls_counts = np.zeros(NUM_CLASSES, dtype=np.int64)
+        for i in range(min(3, len(ds))):   # 只看前3个样本
+            lab_i = ds[i]["label"].numpy()
+            u, c = np.unique(lab_i, return_counts=True)
+            for ui, ci in zip(u, c):
+                if 0 <= ui < NUM_CLASSES: cls_counts[ui] += ci
+        print(f"[DEBUG] {name} class voxels:", dict((CLASS_NAMES[i], int(v)) for i,v in enumerate(cls_counts)))
 
     for epoch in range(1, args.epochs + 1):
         # -------- 训练（patch-based）--------
@@ -250,14 +284,16 @@ def main(args):
 
             with torch.cuda.amp.autocast(enabled=args.amp):
                 logits = model(img_c)
-                ce = F.cross_entropy(logits, lab_c)
-                dl = dice_loss_multiclass(logits, lab_c)
-                loss = ce + 0.5*dl
+                #ce = F.cross_entropy(logits, lab_c)
+                ce = criterion(logits, lab_c)  # 用上面的加权 CE
+                dice_w = torch.tensor([0.0, 1.0, 1.2, 2.0, 2.5, 3.5], dtype=torch.float32, device=device)  # 背景权重0
+                dl = dice_loss_multiclass(logits, lab_c, class_weights=dice_w, drop_bg=True)
+                loss = ce + 1.0*dl
             loss = loss / accum
             # 记录原始 ce/dice/total（注意：这里记录的是未除以accum前的数）
             sum_ce  += ce.item()
             sum_dl  += dl.item()
-            sum_total += (ce.item() + 0.5*dl.item())
+            sum_total += (ce.item() + 1.0*dl.item())
             n_steps += 1
 
 

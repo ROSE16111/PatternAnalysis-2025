@@ -92,6 +92,11 @@ In each epoch, only one random patch is taken from each sample. In the next epoc
   * change random sampling to balanced sampling to avoid sampling bias
   * set mdice_full_org(get rid of background) as the best indicator
 
+**improved 3**
+  * Add category weights to CE
+  * Dice is excluded from the background, and small organs are given greater weight.
+  * Corrected "Union sampling" → "Class-based equalization sampling"
+
 **visualize**:
 * training_losses.png
   * Total loss = CE + 0.5*DiceLoss
