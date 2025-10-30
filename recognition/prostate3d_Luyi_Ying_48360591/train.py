@@ -23,6 +23,14 @@ python recognition\prostate3d_Luyi_Ying_48360591\train.py `
   --patch 64 64 64 `
   --accum 1 `
   --amp
+
+  
+python recognition\prostate3d_Luyi_Ying_48360591\train.py `
+  --data_root "D:\document\UQ\4COMP3710\A3\data" `
+  --epochs 30 --batch_size 1 `
+  --base 8 --patch 64 64 64 --accum 1 --amp `
+  --fullval_every 5 --val_patch 64 64 64 --val_overlap 16
+
 """
 import argparse
 from pathlib import Path
@@ -35,6 +43,58 @@ from modules import UNet3D
 from dataset import Prostate3DDataset
 import math
 import torch.nn.functional as F
+
+def _starts(L, P, O):
+    if L <= P: return [0]
+    stride = max(P - O, 1)
+    s = list(range(0, L - P + 1, stride))
+    if s[-1] != L - P: s.append(L - P)
+    return s
+
+@torch.no_grad()
+def sliding_window_predict_logits(model, img, num_classes, patch, overlap, device, amp=True):
+    # img: (B=1, C=1, Z,Y,X) on device
+    _, _, Z, Y, X = img.shape
+    pz, py, px = patch
+    sz, sy, sx = _starts(Z,pz,overlap), _starts(Y,py,overlap), _starts(X,px,overlap)
+    probs_sum = np.zeros((num_classes, Z, Y, X), dtype=np.float32)
+    count_map = np.zeros((Z, Y, X), dtype=np.float32)
+
+    autocast = torch.cuda.amp.autocast if device.type=="cuda" else torch.cpu.amp.autocast
+    model.eval()
+    for z0 in sz:
+        for y0 in sy:
+            for x0 in sx:
+                tile = img[:, :, z0:z0+pz, y0:y0+py, x0:x0+px]
+                with autocast(enabled=amp):
+                    logits = model(tile)                  # (1,C,*,*,*)
+                    probs  = F.softmax(logits, dim=1)[0].float().cpu().numpy()
+                cz, cy, cx = probs.shape[1:]
+                probs_sum[:, z0:z0+cz, y0:y0+cy, x0:x0+cx] += probs
+                count_map[z0:z0+cz, y0:y0+cy, x0:x0+cx] += 1
+    probs = probs_sum / np.maximum(count_map[None,...], 1e-6)
+    return probs  # (C,Z,Y,X)
+
+# (For val dataloader, calculate per-class Dice)
+def full_volume_validation(model, dl_val, device, num_classes=5, patch=(64,64,64), overlap=16, amp=True):
+    model.eval()
+    dices_all = []
+    with torch.no_grad():
+        for batch in dl_val:
+            img = batch["image"].to(device)  # 形状已是 (1,1,Z,Y,X)
+            lab = batch["label"].to(device)  # 形状已是 (1,Z,Y,X)
+            probs = sliding_window_predict_logits(model, img, num_classes, patch, overlap, device, amp)
+            pred  = probs.argmax(0)  # (Z,Y,X)
+            per_c = []
+            for c in range(num_classes):
+                p = (pred == c); t = (lab[0] == c)
+                inter = (p & t).sum().item()
+                denom = p.sum().item() + t.sum().item() + 1e-6
+                per_c.append(2.0*inter/denom)
+            dices_all.append(per_c)
+    dices_all = np.array(dices_all, dtype=np.float32) if len(dices_all) else np.zeros((1,num_classes), np.float32)
+    return dices_all.mean(0)  # per-class Dice
+
 def dice_loss_multiclass(logits, target, eps=1e-5):
     """
     logits: (B,C,Z,Y,X), target: (B,Z,Y,X) in [0..C-1]
@@ -208,10 +268,30 @@ def main(args):
             print(f"  - {name:<8s}: {v:.4f}  [{'OK' if v>=0.70 else 'LOW'}]")
         print("")
 
-        if mdice > best_mdice:
-            best_mdice = mdice
-            torch.save({"model": model.state_dict(), "args": vars(args)}, ckpt_path)
-            print(f"[SAVE] best -> {ckpt_path} (mean Dice={best_mdice:.4f})")
+        # ---- 周期性全幅滑窗验证（更客观，用它来挑 best）----
+        do_full = (epoch % args.fullval_every == 0) or (epoch == args.epochs)
+        if do_full:
+            per_class_full = full_volume_validation(
+                model, dl_val, device, num_classes=5,
+                patch=tuple(args.val_patch), overlap=args.val_overlap, amp=args.amp
+            )
+            mdice_full = float(per_class_full.mean())
+            print(f"[FULLVAL] mean Dice: {mdice_full:.4f}")
+            for name, v in zip(["body","bone","bladder","rectum","prostate"], per_class_full):
+                print(f"  - {name:<8s}: {v:.4f}  [{'OK' if v>=0.70 else 'LOW'}]")
+
+            # 用“全幅指标”决定是否保存 best
+            if mdice_full > best_mdice:
+                best_mdice = mdice_full
+                torch.save({"model": model.state_dict(), "args": vars(args)}, ckpt_path)
+                print(f"[SAVE] best(full) -> {ckpt_path} (mean Dice={best_mdice:.4f})")
+        else:
+            # 如果本 epoch 不做全幅，用中心-patch 指标兜底挑 best（可选）
+            if mdice > best_mdice:
+                best_mdice = mdice
+                torch.save({"model": model.state_dict(), "args": vars(args)}, ckpt_path)
+                print(f"[SAVE] best(center) -> {ckpt_path} (mean Dice={best_mdice:.4f})")
+
 
     print("[INFO] Training finished.")
 
@@ -225,5 +305,9 @@ if __name__ == "__main__":
     ap.add_argument("--amp", action="store_true", help="混合精度，省显存更快")
     ap.add_argument("--patch", type=int, nargs=3, default=[64,64,64], help="3D patch size (Z Y X)")
     ap.add_argument("--accum", type=int, default=1, help="gradient accumulation steps")
+    ap.add_argument("--fullval_every", type=int, default=5, help="每 N 个 epoch 跑一次全幅滑窗验证")
+    ap.add_argument("--val_patch", type=int, nargs=3, default=[64,64,64], help="验证/滑窗 patch")
+    ap.add_argument("--val_overlap", type=int, default=16, help="滑窗重叠")
+
     args = ap.parse_args()
     main(args)
