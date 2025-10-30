@@ -81,19 +81,24 @@ def full_volume_validation(model, dl_val, device, num_classes=5, patch=(64,64,64
     dices_all = []
     with torch.no_grad():
         for batch in dl_val:
-            img = batch["image"].to(device)  # 形状已是 (1,1,Z,Y,X)
-            lab = batch["label"].to(device)  # 形状已是 (1,Z,Y,X)
+            img = batch["image"].to(device)      # (1,1,Z,Y,X)
+            lab = batch["label"]                 # 先别 .to(device)
             probs = sliding_window_predict_logits(model, img, num_classes, patch, overlap, device, amp)
-            pred  = probs.argmax(0)  # (Z,Y,X)
+            pred  = probs.argmax(0)              # numpy (Z,Y,X)
+            lab_np = lab[0].cpu().numpy()        # numpy (Z,Y,X)
+
             per_c = []
             for c in range(num_classes):
-                p = (pred == c); t = (lab[0] == c)
-                inter = (p & t).sum().item()
-                denom = p.sum().item() + t.sum().item() + 1e-6
-                per_c.append(2.0*inter/denom)
+                p = (pred == c)                  # numpy.bool_
+                t = (lab_np == c)                # numpy.bool_
+                inter = (p & t).sum()            # numpy 标量
+                denom = p.sum() + t.sum() + 1e-6
+                per_c.append(float(2.0*inter/denom))
             dices_all.append(per_c)
+
     dices_all = np.array(dices_all, dtype=np.float32) if len(dices_all) else np.zeros((1,num_classes), np.float32)
-    return dices_all.mean(0)  # per-class Dice
+    return dices_all.mean(0)
+
 
 def dice_loss_multiclass(logits, target, eps=1e-5):
     """
