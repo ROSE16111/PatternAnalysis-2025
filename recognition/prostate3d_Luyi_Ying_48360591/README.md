@@ -15,16 +15,21 @@ Measuring the degree of overlap between predictions and true values;The closer t
 - `tools_count_labels.py` – count the number of each class
 - `quick_check.py` – read a NIfTI，check data and lables
 - `README.md`   – this document
-- `pics` picture resources for readme file
+- `pics` picture resources for readme file and output from other files
 
 ## Environment
-- Python 3.10, PyTorch (CUDA 11.8), nibabel, numpy, scikit-image, torchio/monai (one of them), matplotlib.
+- Python 3.10, PyTorch (CUDA 11.8), torch: 2.2.2; nibabel, numpy, scikit-image, torchio, matplotlib.
 ```bash
 # example - 3D Medical Augmentation Library
 pip install nibabel numpy scikit-image matplotlib torchio
 # or: pip install monai
 ```
+## device:
+* NVIDIA-SMI 527.41 
+* Driver Version: 527.41 
+* CUDA Version: 12.0 2G
 
+note: use patch for run in GPU with low storage
 ## data
 `semantic_MRs_anon/` -  3D MRI volumetric images, X
 
@@ -44,7 +49,9 @@ pip install nibabel numpy scikit-image matplotlib torchio
   * 4: rectum （0.14%）
   * 5: prostate（0.10%）
 * num_classes=6
-
+## result:
+Results on Test Set
+## Testing Instructions
 ## code:
 ### `dataset.py`
 Find the correct file, match the image with the label, normalize the ID, split the data, read the NIfTI, perform normalization, and return the standard tensor.
@@ -84,6 +91,15 @@ In each epoch, only one random patch is taken from each sample. In the next epoc
 **imporved 2**:
   * change random sampling to balanced sampling to avoid sampling bias
   * set mdice_full_org(get rid of background) as the best indicator
+
+**visualize**:
+* training_losses.png
+  * Total loss = CE + 0.5*DiceLoss
+* val_mdice.png
+  * Val mDice (all) ： Average Dice with background (6 categories)
+  * Val mDice (organs) ：The background was removed and only the average of the 5 organs was taken (which is more representative of organ performance).
+* val_per_class_dice.png : The six lines represent the Dice of background/body/bone/bladder/rectum/prostate.
+
 
 ### `predict.py`
 Inference/Derived Prediction

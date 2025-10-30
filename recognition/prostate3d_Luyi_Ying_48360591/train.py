@@ -43,6 +43,10 @@ from modules import UNet3D
 from dataset import Prostate3DDataset
 import math
 import torch.nn.functional as F
+import matplotlib
+matplotlib.use("Agg")  # 无 GUI 也能保存图片
+import matplotlib.pyplot as plt
+
 
 def _starts(L, P, O):
     if L <= P: return [0]
@@ -196,6 +200,19 @@ def main(args):
     best_mdice = 0.0
     outdir = Path("runs"); outdir.mkdir(exist_ok=True)
     ckpt_path = outdir / "best.ckpt"
+    pics_dir = Path(r"D:\document\UQ\4COMP3710\A3\PatternAnalysis-2025\recognition\prostate3d_Luyi_Ying_48360591\pics")
+    pics_dir.mkdir(parents=True, exist_ok=True)
+
+    # 日志容器：记录每个 epoch 的训练损失与验证 Dice
+    log = {
+        "train_loss_total": [],
+        "train_loss_ce": [],
+        "train_loss_dice": [],
+        "val_mdice_all": [],
+        "val_mdice_org": [],
+        "val_per_class": []  # 每个 epoch 的逐类 dice（center-patch），shape=(6,)
+    }
+
 
     patch = tuple(args.patch)
     accum = max(1, args.accum)
@@ -204,6 +221,7 @@ def main(args):
         # -------- 训练（patch-based）--------
         model.train()
         optimizer.zero_grad(set_to_none=True)
+        sum_total, sum_ce, sum_dl, n_steps = 0.0, 0.0, 0.0, 0
         step_in_accum = 0
 
         for batch in dl_train:
@@ -236,6 +254,11 @@ def main(args):
                 dl = dice_loss_multiclass(logits, lab_c)
                 loss = ce + 0.5*dl
             loss = loss / accum
+            # 记录原始 ce/dice/total（注意：这里记录的是未除以accum前的数）
+            sum_ce  += ce.item()
+            sum_dl  += dl.item()
+            sum_total += (ce.item() + 0.5*dl.item())
+            n_steps += 1
 
 
             scaler.scale(loss).backward()
@@ -249,6 +272,14 @@ def main(args):
         # 如果最后不足 accum 也要 step 一下
         if step_in_accum > 0:
             scaler.step(optimizer); scaler.update(); optimizer.zero_grad(set_to_none=True)
+        if n_steps > 0:
+            log["train_loss_total"].append(sum_total / n_steps)
+            log["train_loss_ce"].append(sum_ce / n_steps)
+            log["train_loss_dice"].append(sum_dl / n_steps)
+        else:
+            log["train_loss_total"].append(0.0)
+            log["train_loss_ce"].append(0.0)
+            log["train_loss_dice"].append(0.0)
 
         # -------- 验证（用较小中心区域评估，避免 OOM）--------
         model.eval()
@@ -292,6 +323,10 @@ def main(args):
             print(f"  - {name:<8s}: {v:.4f}  [{'OK' if (name!='background' and v>=0.70) else 'LOW'}]")
         print("")
 
+        log["val_mdice_all"].append(mdice_all)
+        log["val_mdice_org"].append(mdice_org)
+        log["val_per_class"].append(per_class.copy())
+
         # ---- 周期性全幅滑窗验证（更客观，用它来挑 best）----
         do_full = (epoch % args.fullval_every == 0) or (epoch == args.epochs)
         if do_full:
@@ -310,6 +345,44 @@ def main(args):
                 best_mdice = mdice_full_org
                 torch.save({"model": model.state_dict(), "args": vars(args)}, ckpt_path)
                 print(f"[SAVE] best(full) -> {ckpt_path} (organ-mean={best_mdice:.4f})")
+            #log["val_full_mdice_all"].append(mdice_full_all)
+            #log["val_full_mdice_org"].append(mdice_full_org)
+        
+
+
+    # === [CURVES] Save training curves ===
+    epochs = np.arange(1, len(log["train_loss_total"])+1)
+
+    # 1) 训练损失曲线（total / CE / Dice）
+    plt.figure()
+    plt.plot(epochs, log["train_loss_total"], label="Total loss")
+    plt.plot(epochs, log["train_loss_ce"], label="CE")
+    plt.plot(epochs, log["train_loss_dice"], label="Dice")
+    plt.xlabel("Epoch"); plt.ylabel("Loss"); plt.title("Training Loss Curves"); plt.legend()
+    plt.tight_layout()
+    plt.savefig(pics_dir / "training_losses.png", dpi=150)
+    plt.close()
+
+    # 2) 验证均值Dice曲线（含背景 vs 去背景）
+    plt.figure()
+    plt.plot(epochs, log["val_mdice_all"], label="Val mDice (all)")
+    plt.plot(epochs, log["val_mdice_org"], label="Val mDice (organs)")
+    plt.xlabel("Epoch"); plt.ylabel("Dice"); plt.title("Validation mDice Curves")
+    plt.legend(); plt.tight_layout()
+    plt.savefig(pics_dir / "val_mdice.png", dpi=150)
+    plt.close()
+
+    # 3) 验证逐类Dice曲线（center-patch）
+    val_pc = np.stack(log["val_per_class"], axis=0)  # (E, 6)
+    plt.figure()
+    for i, name in enumerate(CLASS_NAMES):
+        plt.plot(epochs, val_pc[:, i], label=name)
+    plt.xlabel("Epoch"); plt.ylabel("Dice"); plt.title("Per-class Dice (center-patch)")
+    plt.legend(ncol=2); plt.tight_layout()
+    plt.savefig(pics_dir / "val_per_class_dice.png", dpi=150)
+    plt.close()
+
+    print(f"[PICS] Curves saved to: {pics_dir}")
 
 
     print("[INFO] Training finished.")
