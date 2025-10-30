@@ -113,34 +113,38 @@ def dice_loss_multiclass(logits, target, eps=1e-5):
     dice = (2*inter + eps) / (denom + eps)
     return 1.0 - dice.mean()
 
-def random_crop_3d(img, lab, size):
+def random_crop_3d_balanced(img, lab, size, focus=(2,3,4), pos_rate=0.8):
     """
-    Randomly select a patch from the 3D volume.
-    img: (B,1,Z,Y,X) float32
-    lab: (B,Z,Y,X)   int64
-    size: (pz, py, px)
-    Returns a small block of the same dtype/device.
-    Reduce memory pressure
+    以 pos_rate 抽取“包含 focus 类之一”的正样本 patch；否则随机 patch
+    img: (B,1,Z,Y,X)  lab: (B,Z,Y,X)
     """
-    B, C, Z, Y, X = img.shape
-    pz, py, px = size
-    # 保证不越界（如果原图更小就从 0 开始并在后面做必要的 pad）
-    z0 = 0 if Z <= pz else torch.randint(0, Z - pz + 1, (1,), device=img.device).item()
-    y0 = 0 if Y <= py else torch.randint(0, Y - py + 1, (1,), device=img.device).item()
-    x0 = 0 if X <= px else torch.randint(0, X - px + 1, (1,), device=img.device).item()
-    z1, y1, x1 = min(z0+pz, Z), min(y0+py, Y), min(x0+px, X)
-    img_c = img[:, :, z0:z1, y0:y1, x0:x1]
-    lab_c = lab[:,    z0:z1, y0:y1, x0:x1]
-    # 若边界导致尺寸比目标小（极少数情况），做零填充到目标 size
-    if img_c.shape[2:] != (pz, py, px):
-        pad_z = pz - img_c.shape[2]
-        pad_y = py - img_c.shape[3]
-        pad_x = px - img_c.shape[4]
-        img_c = torch.nn.functional.pad(img_c, (0, max(pad_x,0), 0, max(pad_y,0), 0, max(pad_z,0)))
-        lab_c = torch.nn.functional.pad(lab_c, (0, max(pad_x,0), 0, max(pad_y,0), 0, max(pad_z,0)))
-        img_c = img_c[:, :, :pz, :py, :px]
-        lab_c = lab_c[:,    :pz, :py, :px]
-    return img_c, lab_c
+    B,C,Z,Y,X = img.shape
+    pz,py,px = size
+    def _crop_at(zc,yc,xc):
+        z0 = max(0, min(zc - pz//2, Z - pz))
+        y0 = max(0, min(yc - py//2, Y - py))
+        x0 = max(0, min(xc - px//2, X - px))
+        return (img[:,:,z0:z0+pz, y0:y0+py, x0:x0+px],
+                lab[:,  z0:z0+pz, y0:y0+py, x0:x0+px])
+
+    use_pos = (torch.rand(()) < pos_rate)
+    if use_pos:
+        mask = torch.zeros_like(lab, dtype=torch.bool)
+        for c in focus:
+            mask |= (lab == c)
+        if mask.any():
+            idx = mask.nonzero(as_tuple=False)
+            k = torch.randint(0, idx.shape[0], (1,)).item()
+            zc, yc, xc = idx[k, -3:].tolist()
+            img_c, lab_c = _crop_at(zc,yc,xc)
+            return img_c, lab_c
+    # fallback: 随机裁剪
+    z0 = 0 if Z<=pz else torch.randint(0, Z-pz+1, (1,), device=img.device).item()
+    y0 = 0 if Y<=py else torch.randint(0, Y-py+1, (1,), device=img.device).item()
+    x0 = 0 if X<=px else torch.randint(0, X-px+1, (1,), device=img.device).item()
+    return (img[:,:,z0:z0+pz, y0:y0+py, x0:x0+px],
+            lab[:,  z0:z0+pz, y0:y0+py, x0:x0+px])
+
 
 def dice_per_class_from_logits(logits, target, num_classes=5):
     with torch.no_grad():
@@ -207,7 +211,8 @@ def main(args):
             lab = batch["label"].to(device)   # (B,Z,Y,X)
 
             # 从整幅里裁一个 patch
-            img_c, lab_c = random_crop_3d(img, lab, patch)
+            img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(2,3,4), pos_rate=0.8)
+
 
             # ----- 轻量增强light aug -----
             if torch.rand(1).item() < 0.5:  # 随机翻转三个轴

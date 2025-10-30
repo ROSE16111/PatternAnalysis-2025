@@ -70,12 +70,17 @@ training+validation
   * AdamW optimization; 
   * can enable --amp mixed precision.
 * Calculate per-class Dice for each epoch, print the table, and save best.ckpt - mean Dice(val) at `runs/best.ckpt`
-**imporved**:
 
-    In each epoch, only one random patch is taken from each sample. In the next epoch, another patch is taken from a different location within the same volume (randomness + data augmentation). Each epoch uses a center-patch quick check, and after N epochs, a full-scale sliding window verification is performed, saving best.ckpt with the "full-scale metric" as the standard.
-* Do light weight training
-* Replace the loss with CE + Dice (weight 0.5 is relatively stable).
+**imporved 1**:
 
+In each epoch, only one random patch is taken from each sample. In the next epoch, another patch is taken from a different location within the same volume (randomness + data augmentation). Each epoch uses a center-patch quick check, and after N epochs, a full-scale sliding window verification is performed, saving best.ckpt with the "full-scale metric" as the standard.
+
+  * Do light weight training
+  * Replace the loss with CE + Dice (weight 0.5 is relatively stable).
+
+**imporved 2**:
+  * change random sampling to balanced sampling to avoid sampling bias
+  * lose functoin: class-weighted CE
 
 ### `predict.py`
 Inference/Derived Prediction
