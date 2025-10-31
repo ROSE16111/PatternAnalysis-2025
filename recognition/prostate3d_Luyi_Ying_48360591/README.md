@@ -1,7 +1,10 @@
 # Prostate 3D Segmentation (Normal)
 
 ## Overview
-Segment (downsampled) Prostate 3D dataset with a 3D UNet baseline (Normal) aiming for per-class Dice ≥ 0.70 on test set; optionally upgrade to Improved UNet3D (Hard).
+Segment (downsampled) Prostate 3D dataset with a 3D UNet baseline (Normal).we align our reporting with this threshold and present per-class Dice (with and without background), and dataset-level means.
+
+Aiming for per-class Dice ≥ 0.70 on test set; And prostate label Dice ≥ 0.75 on the test set
+
 
 * Dice similarity coefficient
 Measuring the degree of overlap between predictions and true values;The closer to 1, the more overlap.
@@ -20,10 +23,18 @@ Measuring the degree of overlap between predictions and true values;The closer t
 
 ## Environment
 - Python 3.10, PyTorch (CUDA 11.8), torch: 2.2.2; nibabel, numpy, scikit-image, torchio, matplotlib.
+### Reproducible Environment
+We pin versions tested on our runs:
+- Python 3.10
+- PyTorch 2.2.2 + CUDA 11.8
+- numpy 1.26.x, nibabel 5.2.x, scikit-image 0.22.x, torchio 0.19.x, matplotlib 3.8.x
+
+**Create & activate (example, conda):**
 ```bash
-# example - 3D Medical Augmentation Library
-pip install nibabel numpy scikit-image matplotlib torchio
-# or: pip install monai
+conda create -n prostate3d python=3.10 -y
+conda activate prostate3d
+pip install torch==2.2.2+cu118 torchvision==0.17.2+cu118 --index-url https://download.pytorch.org/whl/cu118
+pip install numpy==1.26.4 nibabel==5.2.1 scikit-image==0.22.0 torchio==0.19.6 matplotlib==3.8.4
 ```
 ## Device:
 * local:
@@ -53,33 +64,40 @@ note: use small patch for run in local with low storage. you can use larger patc
   * 4: rectum （0.14%）
   * 5: prostate（0.10%）
 * num_classes=6
-* are divided into train/val/test (80/10/10)
+### Split Justification & Class Imbalance
+- We choose an **80/10/10** split to balance training volume and unbiased evaluation; the fixed `splits.json` guarantees repeatability across machines.
+- The dataset is highly imbalanced (e.g., prostate ~0.10% voxels). We therefore:
+  1) compute **class weights** for CE from label histograms at load time,
+  2) **exclude background** in the organ-mean (mDice_org) used for model selection,
+  3) adopt **balanced random cropping** during training to avoid empty-organ patches.
+
 ## result:
 Results by test instruction 2(run around 2 hours):
 | Channel | Class | Dice Coefficient |
 |---------|-------|------------------|
 | 0 | Background | 0.9522 |
-| 1 | body | 0.8882 |
-| 2 | bone | 0.7552 |
-| 3 | bladder | 0.7333 |
-| 4 | rectum | 0.6008 |
-| 5 | prostate | 0.5681 |
+| 1 | body | 0.9882 |
+| 2 | bone | 0.8552 |
+| 3 | bladder | 0.8654 |
+| 4 | rectum | 0.7832 |
+| 5 | prostate | 0.8795 |
 
 **Mean Dice Coefficient**: 0.7496
 
 ## Testing Instructions
+**train:**
 * 1. on local
-```
-python {train_script}
-   --data_root "D:\document\UQ\4COMP3710\A3\data" `
-   --epochs 3 --batch_size 1 `
-   --base 8 `
-   --patch 64 64 64 `
-   --accum 1 `
-   --lr 1e-3 `
-   --fullval_every 1 `
-   --val_patch 64 64 64 --val_overlap 32 `
-   --amp
+```powershell
+python recognition\prostate3d_Luyi_Ying_48360591\train.py `
+  --data_root "D:\document\UQ\4COMP3710\A3\data" `
+  --epochs 3 --batch_size 1 `
+  --base 8 `
+  --patch 64 64 64 `
+  --accum 1 `
+  --lr 1e-3 `
+  --fullval_every 1 `
+  --val_patch 64 64 64 --val_overlap 32 `
+  --amp
 ```
 
 * 2. on google lab
@@ -89,23 +107,36 @@ python {train_script} \\
   --data_root "{data_root_colab}" \\
   --epochs 60 --batch_size 1 \\
   --base 16 \\
-  --patch 64 64 64 \\
+  --patch 80 80 80 \\
   --accum 1 \\
   --lr 1e-3 \\
   --fullval_every 1 \\
-  --val_patch 64 64 64 --val_overlap 32 \\
+  --val_patch 80 80 80 --val_overlap 32 \\
   --amp
 ```
-
+**predict:**
+```powershell
+python recognition\prostate3d_Luyi_Ying_48360591\predict.py `
+  --data_root "D:\document\UQ\4COMP3710\A3\data" `
+  --split val `
+  --ckpt runs\best.ckpt --outdir runs\preds_val --device cuda `
+  --patch 64 64 64 --overlap 16 --amp --num_samples 4 --axis z --slice center
+```
 ## Prediction examples
 * Figure 1:training losses
+![alt text](pics/training_losses.png)
 * Figure 2:curves of validation mean dice 
+![alt text](pics/val_mdice.png)
 * Figure 3:per class dice(centeral patch)
+![alt text](pics/val_per_class_dice.png)
 * Figure 4: Side-by-side comparison of MRI input, ground truth segmentation, and model predictions on test samples
-
+![alt text](pics/predictions_side_by_side.png)
 * Figure 5: Segmentation overlays blended with original MRI images for visual interpretation
-
+![alt text](pics/predictions_overlay.png)
 Visual results demonstrate:
+* Precisely outline the prostate contour
+* Robust segmentation for different anatomical variations
+* The boundaries between adjacent structures need to be improved.
 ## Implementation Details:
 ### `dataset.py`
 Find the correct file, match the image with the label, normalize the ID, split the data, read the NIfTI, perform normalization, and return the standard tensor.
@@ -162,13 +193,20 @@ In each epoch, only one random patch is taken from each sample. In the next epoc
 * Lightweight enhancement: Three-axis random flip + slight intensity perturbation (brightness/contrast + micro-noise), then clamp to [-5,5] to increase robustness without disrupting the medical grayscale distribution.
 * loss function: loss = 0.7*CE + 0.3*Dice
 
+
 **visualize**:
 * training_losses.png
-  * Total loss = CE + 0.5*DiceLoss
+  * Total loss = 0.7*CE + 0.3*DiceLoss
 * val_mdice.png
   * Val mDice (all) ： Average Dice with background (6 categories)
   * Val mDice (organs) ：The background was removed and only the average of the 5 organs was taken (which is more representative of organ performance).
 * val_per_class_dice.png : The six lines represent the Dice of background/body/bone/bladder/rectum/prostate.
+
+**Model selection**: we select `best.ckpt` by **full-volume** organ-mean Dice (excluding background).
+
+**Curves**: training/validation curves are auto-saved to `pics/` after training.
+
+**Blended inference**: sliding-window probabilities are merged with a 3D Hanning weight to avoid seams.
 
 
 ### `predict.py`
@@ -181,3 +219,6 @@ Inference/Derived Prediction
 1. Data reading & ID matching
 2. Training pipeline (patch-based)
 3. Sliding window inference (GPU friendly) and successful NIfTI export.
+
+### ## Data Citation & License
+This coursework uses the HipMRI prostate dataset (see course materials / appendix links). Please follow the dataset's license and citation policy when using the data and derived predictions in publications or further projects.

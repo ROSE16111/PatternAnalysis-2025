@@ -112,10 +112,10 @@ def compute_ce_weights(ds, num_classes):
     w = 1.0 / np.log(1.1 + freq)         # “有效样本”式权重，稳定
     w[2] *= 1.5 
     w[3] *= 1.5                         # bladder 适度上调
-    w[4] *= 4.3                          # rectum 强上调
+    w[4] *= 4.4                          # rectum 强上调
     w[5] *= 4.2                         # prostate 强上调
     w[1] *= 1.1
-    w[0] *= 0.4                          # 强烈下调背景
+    w[0] *= 0.5                          # 强烈下调背景
     # 归一到均值=1，避免极端权重数值不稳
     w = w / (w.mean() + 1e-8)
     return torch.tensor(w, dtype=torch.float32)
@@ -438,11 +438,11 @@ def main(args):
             for name, v in zip(CLASS_NAMES, per_class_full):
                 print(f"  - {name:<8s}: {v:.4f}  [{'OK' if (name!='background' and v>=0.70) else 'LOW'}]")
 
-            # 用“去背景”的均值来挑 best（推荐）
-            if mdice_full_org > best_mdice:
-                best_mdice = mdice_full_org
+            # 用全部类的dice as 最佳
+            if mdice_full_all > best_mdice:
+                best_mdice = mdice_full_all
                 torch.save({"model": model.state_dict(), "args": vars(args)}, ckpt_path)
-                print(f"[SAVE] best(full) -> {ckpt_path} (organ-mean={best_mdice:.4f})")
+                print(f"[SAVE] best(full) -> {ckpt_path} (mdice_full_all={best_mdice:.4f})")
             #log["val_full_mdice_all"].append(mdice_full_all)
             #log["val_full_mdice_org"].append(mdice_full_org)
         
