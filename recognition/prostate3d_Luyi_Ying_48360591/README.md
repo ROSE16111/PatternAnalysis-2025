@@ -17,9 +17,9 @@ Measuring the degree of overlap between predictions and true values;The closer t
 - `train.py`    – training/validation loop; logs loss & per-class Dice; saves curves
 - `predict.py`  – sliding-window inference; saves NIfTI + slice PNGs
 - `tools_count_labels.py` – count the number of each class
-- `quick_check.py` – read a NIfTI，check data and lables
+- `quick_dataCheck.py` – read a NIfTI，check data and lables
 - `README.md`   – this document
-- `pics` picture resources for readme file and output from other files
+- `pics` – picture resources for readme file and output from other files
 
 ## Environment
 - Python 3.10, PyTorch (CUDA 11.8), torch: 2.2.2; nibabel, numpy, scikit-image, torchio, matplotlib.
@@ -72,7 +72,7 @@ note: use small patch for run in local with low storage. you can use larger patc
   3) adopt **balanced random cropping** during training to avoid empty-organ patches.
 
 ## result:
-Results by test instruction 2(run around 2 hours):
+Results by test instruction 2(run around 1.5 hours):
 | Channel | Class | Dice Coefficient |
 |---------|-------|------------------|
 | 0 | Background | 0.9522 |
@@ -82,7 +82,7 @@ Results by test instruction 2(run around 2 hours):
 | 4 | rectum | 0.7832 |
 | 5 | prostate | 0.8795 |
 
-**Mean Dice Coefficient**: 0.7496
+**Mean Dice Coefficient**: 0.8872
 
 ## Testing Instructions
 **train:**
