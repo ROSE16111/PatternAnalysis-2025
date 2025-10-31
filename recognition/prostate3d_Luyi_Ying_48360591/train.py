@@ -112,9 +112,10 @@ def compute_ce_weights(ds, num_classes):
     w = 1.0 / np.log(1.1 + freq)         # “有效样本”式权重，稳定
     w[2] *= 1.5 
     w[3] *= 1.5                         # bladder 适度上调
-    w[4] *= 4.0                          # rectum 强上调
-    w[5] *= 4.0                         # prostate 强上调
-    w[0] *= 0.5                          # 强烈下调背景
+    w[4] *= 4.3                          # rectum 强上调
+    w[5] *= 4.2                         # prostate 强上调
+    w[1] *= 1.1
+    w[0] *= 0.4                          # 强烈下调背景
     # 归一到均值=1，避免极端权重数值不稳
     w = w / (w.mean() + 1e-8)
     return torch.tensor(w, dtype=torch.float32)
@@ -298,16 +299,24 @@ def main(args):
 
             # 从整幅里裁一个 patch, pos_rate:命中比例
             r = torch.rand(()).item()
-            if r < 0.80:
-                # 80%：器官中心
-                img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(2,3,4,5), pos_rate=1.0)
-            elif r < 0.85:
-                # 15%：身体中心
+            if r < 0.75:
+                # 75%：器官中心 —— 其中优先命中 prostate/rectum
+                u = torch.rand(()).item()
+                if u < 0.65:
+                    # 65%*75% ≈ 49% 的总批次直指 prostate
+                    img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(5,), pos_rate=1.0)
+                elif u < 0.90:
+                    # 25%*75% ≈ 19% 的总批次直指 rectum
+                    img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(4,), pos_rate=1.0)
+                else:
+                    # 10%*75% ≈ 7.5% 的总批次分给 bone/bladder 以免遗忘
+                    img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(2,3), pos_rate=1.0)
+            elif r < 0.90:
+                # 15%：身体中心 —— 稳住 body 的判别力（常见/大类）
                 img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(1,), pos_rate=1.0)
             else:
-                # 5%：背景中心（纯负样本），强迫模型学“不是器官”的外观
+                # 10%：纯背景 —— 防止把“非器官”都学坏
                 img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(0,), pos_rate=1.0)
-
 
 
             # ----- 轻量增强light aug -----
@@ -341,12 +350,12 @@ def main(args):
                 )
 
                 # 让 CE 更主导，Dice 辅助对齐小器官
-                loss = 0.7*ce + 0.3*dl
+                loss = 0.6*ce + 0.4*dl
             loss = loss / accum
             # 记录原始 ce/dice/total（注意：这里记录的是未除以accum前的数）
             sum_ce  += ce.item()
             sum_dl  += dl.item()
-            sum_total += (ce.item() + 1.0*dl.item())
+            sum_total += (0.6*ce.item() + 0.4*dl.item())
             n_steps += 1
 
 

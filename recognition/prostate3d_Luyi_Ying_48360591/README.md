@@ -6,8 +6,9 @@ Segment (downsampled) Prostate 3D dataset with a 3D UNet baseline (Normal) aimin
 * Dice similarity coefficient
 Measuring the degree of overlap between predictions and true values;The closer to 1, the more overlap.
 
-    ![alt text](pics/image.png)
-## file structures
+    ![formula of Dice](pics/image.png)
+     
+## File structures
 - `modules.py`  – model components (3D UNet baseline)
 - `dataset.py`  – NIfTI I/O, read and preprocessing data
 - `train.py`    – training/validation loop; logs loss & per-class Dice; saves curves
@@ -24,16 +25,19 @@ Measuring the degree of overlap between predictions and true values;The closer t
 pip install nibabel numpy scikit-image matplotlib torchio
 # or: pip install monai
 ```
-## device:
-* NVIDIA-SMI 527.41 
-* Driver Version: 527.41 
-* CUDA Version: 12.0 2G
+## Device:
+* local:
+  * NVIDIA-SMI 527.41 
+  * Driver Version: 527.41 
+  * CUDA Version: 12.0 2G
+* Google lab
+  * GPU A100
 
-note: use patch for run in GPU with low storage. you can use larger patch by supported GPU
+note: use small patch for run in local with low storage. you can use larger patch by supported GPU
 ## data
-`semantic_MRs_anon/` -  3D MRI volumetric images, X
+`semantic_MRs_anon/` -  3D MRI volumetric images, `X`
 
-`semantic_labels_anon/` - 3D semantic tags, Y
+`semantic_labels_anon/` - 3D semantic tags, `Y`
 
 * **canonical id**
     
@@ -49,18 +53,19 @@ note: use patch for run in GPU with low storage. you can use larger patch by sup
   * 4: rectum （0.14%）
   * 5: prostate（0.10%）
 * num_classes=6
+* are divided into train/val/test (80/10/10)
 ## result:
 Results by test instruction 2(run around 2 hours):
 | Channel | Class | Dice Coefficient |
 |---------|-------|------------------|
-| 0 | Background | 0.9797 |
-| 1 | body | 0.9382 |
-| 2 | bone | 0.8142 |
-| 3 | bladder | 0.7583 |
-| 4 | rectum | 0.5327 |
-| 5 | prostate | 0.7176 |
+| 0 | Background | 0.9522 |
+| 1 | body | 0.8882 |
+| 2 | bone | 0.7552 |
+| 3 | bladder | 0.7333 |
+| 4 | rectum | 0.6008 |
+| 5 | prostate | 0.5681 |
 
-**Mean Dice Coefficient**: 0.7901
+**Mean Dice Coefficient**: 0.7496
 
 ## Testing Instructions
 * 1. on local
@@ -91,7 +96,17 @@ python {train_script} \\
   --val_patch 64 64 64 --val_overlap 32 \\
   --amp
 ```
-## code:
+
+## Prediction examples
+* Figure 1:training losses
+* Figure 2:curves of validation mean dice 
+* Figure 3:per class dice(centeral patch)
+* Figure 4: Side-by-side comparison of MRI input, ground truth segmentation, and model predictions on test samples
+
+* Figure 5: Segmentation overlays blended with original MRI images for visual interpretation
+
+Visual results demonstrate:
+## Implementation Details:
 ### `dataset.py`
 Find the correct file, match the image with the label, normalize the ID, split the data, read the NIfTI, perform normalization, and return the standard tensor.
 
