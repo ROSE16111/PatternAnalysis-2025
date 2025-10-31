@@ -25,7 +25,7 @@ python recognition\prostate3d_Luyi_Ying_48360591\train.py `
   --amp
 
   base: 8/16
-  
+  patch: 64/80/96
 python recognition\prostate3d_Luyi_Ying_48360591\train.py `
   --data_root "D:\document\UQ\4COMP3710\A3\data" `
   --epochs 30 --batch_size 1 `
@@ -259,7 +259,7 @@ def main(args):
     best_mdice = 0.0
     outdir = Path("runs"); outdir.mkdir(exist_ok=True)
     ckpt_path = outdir / "best.ckpt"
-    pics_dir = Path(r"D:\document\UQ\4COMP3710\A3\PatternAnalysis-2025\recognition\prostate3d_Luyi_Ying_48360591\pics")
+    pics_dir = Path("pics")
     pics_dir.mkdir(parents=True, exist_ok=True)
 
     # 日志容器：记录每个 epoch 的训练损失与验证 Dice

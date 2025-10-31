@@ -1,4 +1,4 @@
-# Prostate 3D Segmentation (Normal → Hard)
+# Prostate 3D Segmentation (Normal)
 
 ## Overview
 Segment (downsampled) Prostate 3D dataset with a 3D UNet baseline (Normal) aiming for per-class Dice ≥ 0.70 on test set; optionally upgrade to Improved UNet3D (Hard).
@@ -29,7 +29,7 @@ pip install nibabel numpy scikit-image matplotlib torchio
 * Driver Version: 527.41 
 * CUDA Version: 12.0 2G
 
-note: use patch for run in GPU with low storage
+note: use patch for run in GPU with low storage. you can use larger patch by supported GPU
 ## data
 `semantic_MRs_anon/` -  3D MRI volumetric images, X
 
@@ -50,12 +50,56 @@ note: use patch for run in GPU with low storage
   * 5: prostate（0.10%）
 * num_classes=6
 ## result:
-Results on Test Set
+Results by test instruction 2(run around 2 hours):
+| Channel | Class | Dice Coefficient |
+|---------|-------|------------------|
+| 0 | Background | 0.9797 |
+| 1 | body | 0.9382 |
+| 2 | bone | 0.8142 |
+| 3 | bladder | 0.7583 |
+| 4 | rectum | 0.5327 |
+| 5 | prostate | 0.7176 |
+
+**Mean Dice Coefficient**: 0.7901
+
 ## Testing Instructions
+* 1. on local
+```
+python {train_script}
+   --data_root "D:\document\UQ\4COMP3710\A3\data" `
+   --epochs 3 --batch_size 1 `
+   --base 8 `
+   --patch 64 64 64 `
+   --accum 1 `
+   --lr 1e-3 `
+   --fullval_every 1 `
+   --val_patch 64 64 64 --val_overlap 32 `
+   --amp
+```
+
+* 2. on google lab
+
+```
+python {train_script} \\
+  --data_root "{data_root_colab}" \\
+  --epochs 60 --batch_size 1 \\
+  --base 16 \\
+  --patch 64 64 64 \\
+  --accum 1 \\
+  --lr 1e-3 \\
+  --fullval_every 1 \\
+  --val_patch 64 64 64 --val_overlap 32 \\
+  --amp
+```
 ## code:
 ### `dataset.py`
 Find the correct file, match the image with the label, normalize the ID, split the data, read the NIfTI, perform normalization, and return the standard tensor.
-return  {"id", "image", "label", "affine"}
+
+
+**input**: --data_root
+
+**return**:  {"id", "image", "label", "affine"}
+
 * import
   * `nibabel`：Reading and writing NIfTI (.nii/.nii.gz) medical 3D volume data
   * `torch.utils.data.Dataset`: Custom PyTorch Dataset Base Class
@@ -95,10 +139,13 @@ In each epoch, only one random patch is taken from each sample. In the next epoc
 **improved 3**
   * Add category weights to CE
   * Dice is excluded from the background, and small organs are given greater weight.
-  * Corrected "Union sampling" → "Class-based equalization sampling"
+  * Corrected "Union sampling" → "Class-based equalization sampling" :random_crop_3d_balanced
+  
 **improved 4**
 * Sliding window inference weighted fusion (resolving gaps/joining false negatives)
 * Automatically calculate category weights
+* Lightweight enhancement: Three-axis random flip + slight intensity perturbation (brightness/contrast + micro-noise), then clamp to [-5,5] to increase robustness without disrupting the medical grayscale distribution.
+* loss function: loss = 0.7*CE + 0.3*Dice
 
 **visualize**:
 * training_losses.png
