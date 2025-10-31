@@ -72,17 +72,18 @@ note: use small patch for run in local with low storage. you can use larger patc
   3) adopt **balanced random cropping** during training to avoid empty-organ patches.
 
 ## result:
-Results by test instruction 2(run around 1.5 hours):
+Results by test instruction 2(run around 2 hours):
 | Channel | Class | Dice Coefficient |
 |---------|-------|------------------|
-| 0 | Background | 0.9522 |
-| 1 | body | 0.9882 |
-| 2 | bone | 0.8552 |
-| 3 | bladder | 0.8654 |
-| 4 | rectum | 0.7832 |
-| 5 | prostate | 0.8795 |
+| 0 | Background | 0.9723|
+| 1 | body | 0.9413 |
+| 2 | bone | 0.8304 |
+| 3 | bladder | 0.8590 |
+| 4 | rectum | 0.7905 |
+| 5 | prostate | 0.8334 |
 
-**Mean Dice Coefficient**: 0.8872
+**Mean Dice Coefficient**(all classes): 0.8712
+**Mean Dice Coefficient**(organs only): 0.8509
 
 ## Testing Instructions
 **train:**
@@ -105,7 +106,7 @@ python recognition\prostate3d_Luyi_Ying_48360591\train.py `
 ```
 python {train_script} \\
   --data_root "{data_root_colab}" \\
-  --epochs 60 --batch_size 1 \\
+  --epochs 45 --batch_size 1 \\
   --base 16 \\
   --patch 80 80 80 \\
   --accum 1 \\
@@ -120,7 +121,7 @@ python recognition\prostate3d_Luyi_Ying_48360591\predict.py `
   --data_root "D:\document\UQ\4COMP3710\A3\data" `
   --split val `
   --ckpt runs\best.ckpt --outdir runs\preds_val --device cuda `
-  --patch 64 64 64 --overlap 16 --amp --num_samples 4 --axis z --slice center
+  --patch 80 80 80 --overlap 32 --amp --num_samples 4 --axis z --slice center
 ```
 ## Prediction examples
 * Figure 1:training losses
@@ -134,9 +135,10 @@ python recognition\prostate3d_Luyi_Ying_48360591\predict.py `
 * Figure 5: Segmentation overlays blended with original MRI images for visual interpretation
 ![alt text](pics/predictions_overlay.png)
 Visual results demonstrate:
+* training behaves well
 * Precisely outline the prostate contour
 * Robust segmentation for different anatomical variations
-* The boundaries between adjacent structures need to be improved.
+* The boundaries between adjacent structures need to be improved.(especially the background class still need train, e.g upgrade its weight)
 ## Implementation Details:
 ### `dataset.py`
 Find the correct file, match the image with the label, normalize the ID, split the data, read the NIfTI, perform normalization, and return the standard tensor.
