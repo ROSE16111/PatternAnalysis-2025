@@ -1,4 +1,4 @@
-# train.py —— 3D UNet 基线（Normal）：训练并在验证集打印“逐类 Dice”
+# train.py —— 3D UNet baseline（Normal）：Train and print "Class-by-class Dice" on the validation set.”
 r"""
 to run smock test
 
@@ -56,7 +56,7 @@ from dataset import Prostate3DDataset
 import math
 import torch.nn.functional as F
 import matplotlib
-matplotlib.use("Agg")  # 无 GUI 也能保存图片
+matplotlib.use("Agg")  # Image saving without GUI
 import matplotlib.pyplot as plt
 
 
@@ -68,7 +68,7 @@ def _starts(L, P, O):
     return s
 
 def _blend_weight(pz, py, px):
-    # 3D Hanning 窗，中心权重大、边缘小，减少拼接缝
+    #3D Hanning windows feature a high center weight and narrow edges, reducing seams.
     wz = np.hanning(pz)[:, None, None]
     wy = np.hanning(py)[None, :, None]
     wx = np.hanning(px)[None, None, :]
@@ -109,14 +109,14 @@ def compute_ce_weights(ds, num_classes):
         for ui, ci in zip(u, c):
             if 0 <= ui < num_classes: counts[ui] += ci
     freq = counts / counts.sum()
-    w = 1.0 / np.log(1.1 + freq)         # “有效样本”式权重，稳定
+    w = 1.0 / np.log(1.1 + freq)         # "Effective sample" type weights, stable
     w[2] *= 1.5 
-    w[3] *= 1.5                         # bladder 适度上调
-    w[4] *= 4.4                          # rectum 强上调
-    w[5] *= 4.2                         # prostate 强上调
+    w[3] *= 1.5                         # bladder moderate increase
+    w[4] *= 4.4                          # rectum Strong upgrade
+    w[5] *= 4.2                         # prostate 强上Strong upgrade调
     w[1] *= 1.1
-    w[0] *= 0.5                          # 强烈下调背景
-    # 归一到均值=1，避免极端权重数值不稳
+    w[0] *= 0.5                          # Strongly reduce the background
+    # Normalization to the mean = 1 avoids instability in extreme weight values.
     w = w / (w.mean() + 1e-8)
     return torch.tensor(w, dtype=torch.float32)
 
@@ -127,7 +127,7 @@ def full_volume_validation(model, dl_val, device, num_classes=6, patch=(64,64,64
     with torch.no_grad():
         for batch in dl_val:
             img = batch["image"].to(device)      # (1,1,Z,Y,X)
-            lab = batch["label"]                 # 先别 .to(device)
+            lab = batch["label"]                 # not first .to(device)
             probs = sliding_window_predict_logits(model, img, num_classes, patch, overlap, device, amp)
             pred  = probs.argmax(0)              # numpy (Z,Y,X)
             lab_np = lab[0].cpu().numpy()        # numpy (Z,Y,X)
@@ -138,7 +138,7 @@ def full_volume_validation(model, dl_val, device, num_classes=6, patch=(64,64,64
             for c in range(num_classes):
                 p = (pred == c)                  # numpy.bool_
                 t = (lab_np == c)                # numpy.bool_
-                inter = (p & t).sum()            # numpy 标量
+                inter = (p & t).sum()            # numpy 
                 denom = p.sum() + t.sum() + 1e-6
                 per_c.append(float(2.0*inter/denom))
             dices_all.append(per_c)
@@ -150,8 +150,8 @@ def full_volume_validation(model, dl_val, device, num_classes=6, patch=(64,64,64
 def dice_loss_multiclass(logits, target, eps=1e-5, class_weights=None, drop_bg=True):
     """
     logits: (B,C,Z,Y,X), target: (B,Z,Y,X)
-    class_weights: 长度=C 的权重张量（放在 device 上），用于各类 Dice 加权
-    drop_bg: True 时丢弃背景类的 Dice
+    class_weights: A weight tensor of length C (placed on the device) is used for various Dice weighting methods.
+    When drop_bg: True, discard the background class Dice.
     """
     C = logits.shape[1]
     probs = F.softmax(logits, dim=1)
@@ -175,8 +175,8 @@ def dice_loss_multiclass(logits, target, eps=1e-5, class_weights=None, drop_bg=T
 
 def random_crop_3d_balanced(img, lab, size, focus=(2,3,4,5), pos_rate=0.9):
     """
-    正样本：先在 focus 里随机选一个类，再在该类的体素中随机取一个中心点裁剪；
-    否则随机裁剪。这样每个小器官被看到的机会是均等的。
+    Positive samples: First, randomly select a class from the focus, then randomly select a center point from the voxels of that class for cropping;
+    Otherwise, crop randomly. This ensures that each small organ has an equal chance of being seen.
     """
     B,C,Z,Y,X = img.shape
     pz,py,px = size
@@ -198,7 +198,7 @@ def random_crop_3d_balanced(img, lab, size, focus=(2,3,4,5), pos_rate=0.9):
             zc, yc, xc = idx[k, -3:].tolist()
             return _crop_at(zc,yc,xc)
 
-    # fallback: 随机裁剪
+    # fallback: random cut
     z0 = 0 if Z<=pz else torch.randint(0, Z-pz+1, (1,), device=img.device).item()
     y0 = 0 if Y<=py else torch.randint(0, Y-py+1, (1,), device=img.device).item()
     x0 = 0 if X<=px else torch.randint(0, X-px+1, (1,), device=img.device).item()
@@ -222,7 +222,7 @@ NUM_CLASSES = 6
 CLASS_NAMES = ["background", "body", "bone", "bladder", "rectum", "prostate"]
 
 def dice_per_class(logits, target, num_classes=NUM_CLASSES):
-    """计算逐类 Dice（per-class Dice）"""
+    """count Dice（per-class Dice）"""
     with torch.no_grad():
         pred = logits.argmax(1)  # (B,Z,Y,X)
         dices = []
@@ -238,16 +238,16 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[INFO] Device = {device}")
 
-    # 数据加载（首次运行会在 <data_root>/splits.json 生成数据划分）
+    # load data（The first run will generate data partitions in <data_root>/splits.json.）
     ds_train = Prostate3DDataset(args.data_root, split="train")
     ds_val   = Prostate3DDataset(args.data_root, split="val")
     dl_train = DataLoader(ds_train, batch_size=args.batch_size, shuffle=True, num_workers=0)
     dl_val   = DataLoader(ds_val,   batch_size=1, shuffle=False, num_workers=0)
 
-    # 模型（UNet3D baseline）
+    # model（UNet3D baseline）
     model = UNet3D(in_ch=1, num_classes=NUM_CLASSES, base=args.base).to(device)
 
-    # 损失 + 优化器（baseline：CE，可日后换 DiceLoss/组合以提升）
+    # Loss + Optimizer（baseline：CE）
     #criterion = nn.CrossEntropyLoss()
     # class weights (0=bg, 1=body, 2=bone, 3=bladder, 4=rectum, 5=prostate)
     ce_weights = compute_ce_weights(ds_train, NUM_CLASSES).to(device)
@@ -263,23 +263,23 @@ def main(args):
     pics_dir = Path("pics")
     pics_dir.mkdir(parents=True, exist_ok=True)
 
-    # 日志容器：记录每个 epoch 的训练损失与验证 Dice
+    # Log container: Records the training loss and validation for each epoch.
     log = {
         "train_loss_total": [],
         "train_loss_ce": [],
         "train_loss_dice": [],
         "val_mdice_all": [],
         "val_mdice_org": [],
-        "val_per_class": []  # 每个 epoch 的逐类 dice（center-patch），shape=(6,)
+        "val_per_class": []  # per class' dice in per epoch（center-patch），shape=(6,)
     }
 
 
     patch = tuple(args.patch)
     accum = max(1, args.accum)
-    # ---- DEBUG: 看看标签里到底有哪些类 ----
+    # ---- DEBUG: Let's see what categories are included in the tags. ----
     for name, ds in [("TRAIN", ds_train), ("VAL", ds_val)]:
         cls_counts = np.zeros(NUM_CLASSES, dtype=np.int64)
-        for i in range(min(3, len(ds))):   # 只看前3个样本
+        for i in range(min(3, len(ds))):   # Only look at the first 3 samples
             lab_i = ds[i]["label"].numpy()
             u, c = np.unique(lab_i, return_counts=True)
             for ui, ci in zip(u, c):
@@ -287,47 +287,47 @@ def main(args):
         print(f"[DEBUG] {name} class voxels:", dict((CLASS_NAMES[i], int(v)) for i,v in enumerate(cls_counts)))
 
     for epoch in range(1, args.epochs + 1):
-        # -------- 训练（patch-based）--------
+        # -------- train（patch-based）--------
         model.train()
         optimizer.zero_grad(set_to_none=True)
         sum_total, sum_ce, sum_dl, n_steps = 0.0, 0.0, 0.0, 0
         step_in_accum = 0
 
         for batch in dl_train:
-            img = batch["image"].to(device)   # (B,1,Z,Y,X) 这里 B=1
+            img = batch["image"].to(device)   # (B,1,Z,Y,X) ; B=1
             lab = batch["label"].to(device)   # (B,Z,Y,X)
 
-            # 从整幅里裁一个 patch, pos_rate:命中比例
+            # Cut a patch from the whole image, pos_rate: hit rate
             r = torch.rand(()).item()
             if r < 0.75:
-                # 75%：器官中心 —— 其中优先命中 prostate/rectum
+                # 75%：Organ centers — with priority given to prostate/rectum
                 u = torch.rand(()).item()
                 if u < 0.65:
-                    # 65%*75% ≈ 49% 的总批次直指 prostate
+                    # 65%*75% ≈ 49% The total batch points directly to prostate
                     img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(5,), pos_rate=1.0)
                 elif u < 0.90:
-                    # 25%*75% ≈ 19% 的总批次直指 rectum
+                    # 25%*75% ≈ 19% ~ rectum
                     img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(4,), pos_rate=1.0)
                 else:
-                    # 10%*75% ≈ 7.5% 的总批次分给 bone/bladder 以免遗忘
+                    # 10%*75% ≈ 7.5% The total batches should be allocated to bone/bladder to avoid forgetting.
                     img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(2,3), pos_rate=1.0)
             elif r < 0.90:
-                # 15%：身体中心 —— 稳住 body 的判别力（常见/大类）
+                # 15%：body 
                 img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(1,), pos_rate=1.0)
             else:
-                # 10%：纯背景 —— 防止把“非器官”都学坏
+                # 10%：bg
                 img_c, lab_c = random_crop_3d_balanced(img, lab, patch, focus=(0,), pos_rate=1.0)
 
 
-            # ----- 轻量增强light aug -----
-            if torch.rand(1).item() < 0.5:  # 随机翻转三个轴
+            # ----- light aug -----
+            if torch.rand(1).item() < 0.5:  # Randomly flip three axes
                 if torch.rand(1).item() < 0.5:
                     img_c = img_c.flip(-1); lab_c = lab_c.flip(-1)  # X
                 if torch.rand(1).item() < 0.5:
                     img_c = img_c.flip(-2); lab_c = lab_c.flip(-2)  # Y
                 if torch.rand(1).item() < 0.5:
                     img_c = img_c.flip(-3); lab_c = lab_c.flip(-3)  # Z
-            # 轻度强度扰动（亮度/对比度 + 微噪声）
+            # Mild intensity perturbation (brightness/contrast + slight noise)
             if torch.rand(1).item() < 0.5:
                 scale = 1.0 + 0.10*torch.randn((), device=img_c.device)   # ±10%
                 shift = 0.05*torch.randn((), device=img_c.device)          # ±0.05
@@ -340,19 +340,19 @@ def main(args):
                 #ce = F.cross_entropy(logits, lab_c)
                 ce = criterion(logits, lab_c)
 
-                # Dice 也纳入背景，但给个较小权重，避免全涂背景
+                # Dice is also included in the background, but given a smaller weight to avoid completely covering the background.
                 dice_w = ce_weights.clone()
-                dice_w[0] = 0.2                          # 背景也参与 Dice，但权重很小
+                dice_w[0] = 0.2                          # Background also participates in Dice, but with very little weight.
                 dl = dice_loss_multiclass(
                     logits, lab_c,
                     class_weights=dice_w,
-                    drop_bg=False                         # 关键：不要丢弃背景
+                    drop_bg=False                         # Key point: Don't discard the background.
                 )
 
-                # 让 CE 更主导，Dice 辅助对齐小器官
+                #Let CE take the lead, and Dice assist in aligning small organs.
                 loss = 0.6*ce + 0.4*dl
             loss = loss / accum
-            # 记录原始 ce/dice/total（注意：这里记录的是未除以accum前的数）
+            # record original ce/dice/total
             sum_ce  += ce.item()
             sum_dl  += dl.item()
             sum_total += (0.6*ce.item() + 0.4*dl.item())
@@ -367,7 +367,7 @@ def main(args):
                 optimizer.zero_grad(set_to_none=True)
                 step_in_accum = 0
 
-        # 如果最后不足 accum 也要 step 一下
+        # Even if the final total is insufficient, you still need to perform a step.
         if step_in_accum > 0:
             scaler.step(optimizer); scaler.update(); optimizer.zero_grad(set_to_none=True)
         if n_steps > 0:
@@ -379,14 +379,14 @@ def main(args):
             log["train_loss_ce"].append(0.0)
             log["train_loss_dice"].append(0.0)
 
-        # -------- 验证（用较小中心区域评估，避免 OOM）--------
+        # -------- test--------
         model.eval()
         dices_all = []
         with torch.no_grad():
             for batch in dl_val:
                 img = batch["image"].to(device)   # (B,1,Z,Y,X)
                 lab = batch["label"].to(device)   # (B,Z,Y,X)
-                # 选中心区域的 patch 做验证（简易；后期可换滑窗全幅）
+                # Select the patch in the center area for verification.
                 B, C, Z, Y, X = img.shape
                 pz, py, px = patch
                 z0 = max(0, (Z - pz)//2); y0 = max(0, (Y - py)//2); x0 = max(0, (X - px)//2)
@@ -396,7 +396,7 @@ def main(args):
 
                 logits = model(img_c)
 
-                # 计算逐类 Dice（6 类，含背景）
+                # Calculate the class-by-class Dice (6 classes, including background).
                 per_c = dice_per_class_from_logits(logits, lab_c, num_classes=NUM_CLASSES)
                 dices_all.append(per_c)
 
@@ -408,8 +408,8 @@ def main(args):
         if len(dices_all):
             dices_all = np.stack(dices_all)      # (Nval, 6)
             per_class = dices_all.mean(0)        # (6,)
-            mdice_all = float(per_class.mean())      # 含背景
-            mdice_org = float(per_class[1:].mean())  # 去背景（推荐用于选 best）
+            mdice_all = float(per_class.mean())      # with bg
+            mdice_org = float(per_class[1:].mean())  # no bg
         else:
             per_class = np.zeros(6, dtype=np.float32)
             mdice_all = 0.0
@@ -425,7 +425,7 @@ def main(args):
         log["val_mdice_org"].append(mdice_org)
         log["val_per_class"].append(per_class.copy())
 
-        # ---- 周期性全幅滑窗验证（更客观，用它来挑 best）----
+        # ---- Periodic full-frame sliding window verification (more objective, use it to select the best).----
         do_full = (epoch % args.fullval_every == 0) or (epoch == args.epochs)
         if do_full:
             per_class_full = full_volume_validation(
@@ -438,7 +438,7 @@ def main(args):
             for name, v in zip(CLASS_NAMES, per_class_full):
                 print(f"  - {name:<8s}: {v:.4f}  [{'OK' if (name!='background' and v>=0.70) else 'LOW'}]")
 
-            # 用全部类的dice as 最佳
+            # Using all classes of `dice` as the best approach.
             if mdice_full_all > best_mdice:
                 best_mdice = mdice_full_all
                 torch.save({"model": model.state_dict(), "args": vars(args)}, ckpt_path)
@@ -451,7 +451,7 @@ def main(args):
     # === [CURVES] Save training curves ===
     epochs = np.arange(1, len(log["train_loss_total"])+1)
 
-    # 1) 训练损失曲线（total / CE / Dice）
+    # 1) train loss function（total / CE / Dice）
     plt.figure()
     plt.plot(epochs, log["train_loss_total"], label="Total loss")
     plt.plot(epochs, log["train_loss_ce"], label="CE")
@@ -461,7 +461,7 @@ def main(args):
     plt.savefig(pics_dir / "training_losses.png", dpi=150)
     plt.close()
 
-    # 2) 验证均值Dice曲线（含背景 vs 去背景）
+    # 2) Validate the mean Dice curve (with background vs. without background)
     plt.figure()
     plt.plot(epochs, log["val_mdice_all"], label="Val mDice (all)")
     plt.plot(epochs, log["val_mdice_org"], label="Val mDice (organs)")
@@ -470,7 +470,7 @@ def main(args):
     plt.savefig(pics_dir / "val_mdice.png", dpi=150)
     plt.close()
 
-    # 3) 验证逐类Dice曲线（center-patch）
+    # 3) Validate the Dice curve for each category (center-patch)
     val_pc = np.stack(log["val_per_class"], axis=0)  # (E, 6)
     plt.figure()
     for i, name in enumerate(CLASS_NAMES):
@@ -487,17 +487,17 @@ def main(args):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data_root", type=str, required=True, help="含 semantic_MRs_anon / semantic_labels_anon 的目录")
+    ap.add_argument("--data_root", type=str, required=True, help="Directories containing semantic_MRs_anon / semantic_labels_anon")
     ap.add_argument("--epochs", type=int, default=30)
-    ap.add_argument("--batch_size", type=int, default=1, help="3D 体分割通常 batch 很小")
-    ap.add_argument("--base", type=int, default=16, help="UNet 基通道；显存吃紧可用 16/24/32")
+    ap.add_argument("--batch_size", type=int, default=1, help="3D volume segmentation typically involves very small batch sizes.")
+    ap.add_argument("--base", type=int, default=16, help="UNet base channel; available when memory is tight: 16/24/32")
     ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--amp", action="store_true", help="混合精度，省显存更快")
+    ap.add_argument("--amp", action="store_true", help="Mixed precision, saves video memory and is faster")
     ap.add_argument("--patch", type=int, nargs=3, default=[64,64,64], help="3D patch size (Z Y X)")
     ap.add_argument("--accum", type=int, default=1, help="gradient accumulation steps")
-    ap.add_argument("--fullval_every", type=int, default=5, help="每 N 个 epoch 跑一次全幅滑窗验证")
-    ap.add_argument("--val_patch", type=int, nargs=3, default=[64,64,64], help="验证/滑窗 patch")
-    ap.add_argument("--val_overlap", type=int, default=16, help="滑窗重叠")
+    ap.add_argument("--fullval_every", type=int, default=5, help="Run a full-scale sliding window verification every N epochs.")
+    ap.add_argument("--val_patch", type=int, nargs=3, default=[64,64,64], help="Verification/Sliding Window patch")
+    ap.add_argument("--val_overlap", type=int, default=16, help="Sliding window overlap")
 
     args = ap.parse_args()
     main(args)

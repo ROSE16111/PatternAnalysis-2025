@@ -1,15 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 3D U-Net baseline for Prostate segmentation.
-中文注释：这是最小可运行的3D U-Net，层数和通道数偏小，方便显存有限时先跑通。
-后续可升级：残差块/注意力/深监督 = Improved UNet3D（Hard）。
+This is the minimum viable 3D U-Net, with a relatively small number of layers and channels.
 """
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 class ConvBlock3d(nn.Module):
-    """两次(Conv3d+IN+LeakyReLU)，InstanceNorm对3D医学图像较稳定"""
+    """InstanceNorm is more stable for 3D medical images after two (Conv3d+IN+LeakyReLU) operations."""
     def __init__(self, in_ch, out_ch):
         super().__init__()
         self.conv = nn.Sequential(
@@ -25,7 +24,7 @@ class ConvBlock3d(nn.Module):
         return self.conv(x)
 
 class Down3d(nn.Module):
-    """下采样（MaxPool3d）+ 卷积块"""
+    """Downsampling (MaxPool3d) + Convolutional Blocks"""
     def __init__(self, in_ch, out_ch):
         super().__init__()
         self.pool = nn.MaxPool3d(2)
@@ -36,16 +35,16 @@ class Down3d(nn.Module):
         return self.block(x)
 
 class Up3d(nn.Module):
-    """反卷积上采样 + 与skip连接后再卷积块"""
+    """Deconvolution upsampling + convolution block after skipping"""
     def __init__(self, in_ch, out_ch):
         super().__init__()
-        # 上采样将通道数减半，方便与skip concat
+        # Upsampling halves the number of channels, making it easier to concatenate with skip.
         self.up = nn.ConvTranspose3d(in_ch, in_ch // 2, 2, stride=2)
         self.block = ConvBlock3d(in_ch, out_ch)
 
     def forward(self, x, skip):
         x = self.up(x)
-        # 若尺寸因奇偶差异不一致，则pad到与skip一致
+        # If the dimensions are inconsistent due to parity differences, then pad to and skip should be consistent.
         dz = skip.size(2) - x.size(2)
         dy = skip.size(3) - x.size(3)
         dx = skip.size(4) - x.size(4)
@@ -58,9 +57,9 @@ class Up3d(nn.Module):
 class UNet3D(nn.Module):
     """
     Minimal 3D U-Net
-    in_ch: 输入通道（CT/MRI灰度一般=1）
-    num_classes: 类别数（含背景）；训练用 CrossEntropy
-    base: 基础通道数（小显存可设16/32）
+    in_ch: Input channel (CT/MRI grayscale is generally = 1)
+    num_classes: Number of categories (including background); training use CrossEntropy
+    base: Base number of channels (can be set to 16/32 for small video memory)
     """
     def __init__(self, in_ch=1, num_classes=6, base=16):
         super().__init__()

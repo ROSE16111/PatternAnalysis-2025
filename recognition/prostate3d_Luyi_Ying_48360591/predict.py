@@ -287,8 +287,8 @@ def main(args):
     print(f"[INFO] Device={device}, patch={patch}, overlap={args.overlap}, classes={num_classes}, split={args.split}")
 
     cases_for_fig = []
-    all_dices = []       # 收集每个病例的逐类 Dice
-    case_ids = []        # 对应的病例 id
+    all_dices = []       # Collect each case by category Dice
+    case_ids = []        # Corresponding cases id
 
     for i in range(len(ds)):
         s = ds[i]
@@ -345,8 +345,8 @@ def main(args):
     if all_dices:
         D = np.stack(all_dices, axis=0)           # (N, C)
         mean_per_class = D.mean(axis=0)           # (C,)
-        mean_all = float(mean_per_class.mean())   # 含背景
-        mean_org = float(mean_per_class[1:].mean())  # 去背景
+        mean_all = float(mean_per_class.mean())   # include bg
+        mean_org = float(mean_per_class[1:].mean())  # no bg
 
         print("\n[summary] Mean Dice per class (dataset):")
         for c in range(num_classes):
